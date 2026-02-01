@@ -3,72 +3,107 @@ import requests
 
 # ------------------ PAGE CONFIG ------------------
 st.set_page_config(
-    page_title="TICE – Threat Intelligence Dashboard",
+    page_title="TICE Dashboard",
     layout="wide"
 )
 
-# ------------------ TITLE ------------------
-st.title("🔐 Threat Intelligence Correlation Engine (TICE)")
-st.markdown("Analyze IP addresses using multiple threat intelligence sources.")
+# ------------------ HEADER ------------------
+st.markdown(
+    "<h1 style='text-align:center;'>🔐 Threat Intelligence Correlation Engine</h1>",
+    unsafe_allow_html=True
+)
+st.markdown(
+    "<p style='text-align:center;'>Multi-source IP threat analysis dashboard</p>",
+    unsafe_allow_html=True
+)
 
-# ------------------ INPUT ------------------
-ip_address = st.text_input("Enter IP Address", placeholder="8.8.8.8")
+st.divider()
 
-analyze_btn = st.button("Analyze IP")
+# ------------------ LAYOUT ------------------
+left, right = st.columns([1, 2])
 
-# ------------------ BACKEND URL ------------------
+# ------------------ INPUT PANEL ------------------
+with left:
+    st.subheader("🔎 IP Analysis")
+    ip_address = st.text_input(
+        "Target IP Address",
+        placeholder="8.8.8.8"
+    )
+    analyze_btn = st.button("🚀 Analyze")
+
+    st.info(
+        "This engine correlates multiple CTI feeds "
+        "to generate a unified threat verdict."
+    )
+
+# ------------------ BACKEND ------------------
 BACKEND_URL = "http://127.0.0.1:8000/analyze"
 
-# ------------------ ANALYSIS ------------------
-if analyze_btn:
-    if not ip_address:
-        st.warning("Please enter an IP address")
-    else:
-        with st.spinner("Analyzing threat intelligence..."):
-            try:
-                response = requests.post(
-                    BACKEND_URL,
-                    json={"ip": ip_address},
-                    timeout=20
-                )
+# ------------------ RESULT PANEL ------------------
+with right:
+    if analyze_btn:
+        if not ip_address:
+            st.warning("Please enter a valid IP address.")
+        else:
+            with st.spinner("Collecting threat intelligence..."):
+                try:
+                    response = requests.post(
+                        BACKEND_URL,
+                        json={"ip": ip_address},
+                        timeout=20
+                    )
 
-                if response.status_code == 200:
-                    data = response.json()
+                    if response.status_code == 200:
+                        data = response.json()
 
-                    # Verdict
-                    verdict = data.get("verdict", "Unknown")
-                    score = data.get("malicious_score", 0)
+                        verdict = data.get("verdict", "Unknown")
+                        score = data.get("malicious_score", 0)
 
-                    # Verdict Badge
-                    if verdict == "Malicious":
-                        st.error(f"🚨 Verdict: {verdict}")
-                    elif verdict == "Suspicious":
-                        st.warning(f"⚠️ Verdict: {verdict}")
+                        # ------------------ VERDICT CARD ------------------
+                        if verdict == "Malicious":
+                            st.error("🚨 MALICIOUS IP DETECTED")
+                        elif verdict == "Suspicious":
+                            st.warning("⚠️ SUSPICIOUS ACTIVITY")
+                        else:
+                            st.success("✅ IP IS BENIGN")
+
+                        # ------------------ SCORE ------------------
+                        st.subheader("📊 Threat Risk Score")
+                        st.progress(min(score, 100))
+                        st.caption(f"Risk Level: {score}/100")
+
+                        # ------------------ META INFO ------------------
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.metric("🌍 Country", data.get("geo_location", "N/A"))
+                        with c2:
+                            st.metric("🏢 ASN", data.get("asn", "N/A"))
+
+                        # ------------------ CATEGORIES ------------------
+                        st.subheader("🧠 Threat Categories")
+                        cats = data.get("threat_categories", [])
+                        if cats:
+                            for cat in cats:
+                                st.markdown(f"- **{cat}**")
+                        else:
+                            st.write("No threat categories identified.")
+
+                        # ------------------ SOURCES ------------------
+                        st.subheader("📡 Intelligence Sources")
+                        sources = data.get("sources", [])
+
+                        if sources:
+                            for src in sources:
+                                with st.expander(f"🔍 {src['source']}"):
+                                    st.json(src)
+                        else:
+                            st.info("No source data available.")
+
                     else:
-                        st.success(f"✅ Verdict: {verdict}")
+                        st.error("Backend failed to analyze IP.")
 
-                    # Score
-                    st.metric("Threat Score", score)
+                except Exception as e:
+                    st.error(f"Could not connect to backend: {e}")
 
-                    # Categories
-                    st.subheader("Threat Categories")
-                    st.write(data.get("threat_categories", []))
-
-                    # Geo Info
-                    st.subheader("Geolocation & ASN")
-                    st.json({
-                        "Country": data.get("geo_location"),
-                        "ASN": data.get("asn")
-                    })
-
-                    # Sources
-                    st.subheader("Source Intelligence")
-                    for src in data.get("sources", []):
-                        with st.expander(src["source"]):
-                            st.json(src)
-
-                else:
-                    st.error("Backend error while analyzing IP")
-
-            except Exception as e:
-                st.error(f"Connection error: {e}")
+    else:
+        st.info("👈 Enter an IP address to start analysis.")
