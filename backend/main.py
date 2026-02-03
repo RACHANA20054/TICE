@@ -1,4 +1,6 @@
+from services.abuseipdb_service import check_ip_abuseipdb
 from fastapi import FastAPI
+
 
 app = FastAPI(
     title="AI-Driven Threat Intelligence Correlation Engine",
@@ -14,7 +16,10 @@ def root():
 
 @app.get("/analyze/{ip}")
 def analyze_ip(ip: str):
+    abuseipdb_result = check_ip_abuseipdb(ip)
+
     return {
         "ip": ip,
-        "status": "Analysis logic will be added here"
+        "abuseipdb": abuseipdb_result
     }
+
