@@ -1,10 +1,14 @@
+import os
 import requests
 
-ABUSEIPDB_API_KEY = "ebaa1a6e315ac934de3ea7800cb5693867ae70bd154dad5c3452f89cfbaec977699c1af7232faeb3"
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY")
 ABUSEIPDB_URL = "https://api.abuseipdb.com/api/v2/check"
 
 
 def check_ip_abuseipdb(ip: str):
+    if not ABUSEIPDB_API_KEY:
+        return {"error": "ABUSEIPDB_API_KEY not set"}
+
     headers = {
         "Key": ABUSEIPDB_API_KEY,
         "Accept": "application/json"
@@ -15,18 +19,27 @@ def check_ip_abuseipdb(ip: str):
         "maxAgeInDays": 90
     }
 
-    response = requests.get(ABUSEIPDB_URL, headers=headers, params=params)
+    response = requests.get(
+        ABUSEIPDB_URL,
+        headers=headers,
+        params=params,
+        timeout=10
+    )
 
     if response.status_code != 200:
-        return {"error": "AbuseIPDB API failed"}
+        return {
+            "error": "AbuseIPDB API failed",
+            "status_code": response.status_code,
+            "message": response.text
+        }
 
-    data = response.json()["data"]
+    data = response.json().get("data", {})
 
     return {
         "source": "AbuseIPDB",
-        "abuse_score": data["abuseConfidenceScore"],
-        "is_public": data["isPublic"],
-        "country": data["countryName"],
-        "usage_type": data["usageType"],
-        "last_reported": data["lastReportedAt"]
+        "abuse_score": data.get("abuseConfidenceScore"),
+        "is_public": data.get("isPublic"),
+        "country": data.get("countryName"),
+        "usage_type": data.get("usageType"),
+        "last_reported": data.get("lastReportedAt")
     }
