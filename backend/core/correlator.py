@@ -1,44 +1,81 @@
-def correlate(abuse, shodan, vt):
-    risk_score = 0
+# =========================
+# IP CORRELATION LOGIC
+# =========================
+def correlate(abuse_data, shodan_data, vt_data):
+    score = 0
     reasons = []
 
-    # -------- AbuseIPDB --------
-    if abuse.get("abuse_score", 0) > 50:
-        risk_score += 3
-        reasons.append("High abuse score reported by AbuseIPDB")
+    # 1. AbuseIPDB
+    abuse_score = abuse_data.get("abuse_score", 0)
+    if abuse_score >= 50:
+        score += 50
+        reasons.append(f"High AbuseIPDB score ({abuse_score})")
+    elif abuse_score >= 20:
+        score += 20
+        reasons.append(f"Moderate AbuseIPDB score ({abuse_score})")
+
+    # 2. Shodan
+    open_ports = shodan_data.get("open_ports", [])
+    if open_ports:
+        score += 15
+        reasons.append(f"Open ports exposed: {open_ports}")
+
+    vulns = shodan_data.get("vulns", [])
+    if vulns:
+        score += 25
+        reasons.append("Known vulnerabilities detected")
+
+    # 3. VirusTotal (IP)
+    if vt_data.get("malicious", 0) > 0:
+        score += 40
+        reasons.append("VirusTotal reports malicious detections")
+
+    if vt_data.get("suspicious", 0) > 0:
+        score += 20
+        reasons.append("VirusTotal reports suspicious detections")
+
+    # Final verdict
+    if score >= 70:
+        verdict = "MALICIOUS"
+    elif score >= 40:
+        verdict = "SUSPICIOUS"
     else:
-        reasons.append("No significant abuse reports in AbuseIPDB")
-
-    # -------- Shodan --------
-    open_ports = shodan.get("open_ports", [])
-    dangerous_ports = {22, 23, 3389, 445}
-
-    if any(port in dangerous_ports for port in open_ports):
-        risk_score += 2
-        reasons.append("Potentially dangerous open ports detected by Shodan")
-    else:
-        reasons.append("Only common service ports detected by Shodan")
-
-    # -------- VirusTotal --------
-    malicious = vt.get("malicious", 0)
-    suspicious = vt.get("suspicious", 0)
-
-    if malicious > 0 or suspicious > 0:
-        risk_score += 3
-        reasons.append("VirusTotal reports malicious or suspicious activity")
-    else:
-        reasons.append("VirusTotal engines classify IP as harmless")
-
-    # -------- Verdict --------
-    if risk_score >= 5:
-        verdict = "HIGH RISK"
-    elif risk_score >= 3:
-        verdict = "MEDIUM RISK"
-    else:
-        verdict = "LOW RISK"
+        verdict = "CLEAN"
 
     return {
-        "risk_score": risk_score,
+        "risk_score": min(score, 100),
+        "verdict": verdict,
+        "reasons": reasons
+    }
+
+
+# =========================
+# URL CORRELATION LOGIC
+# =========================
+def correlate_url(vt_data):
+    score = 0
+    reasons = []
+
+    if vt_data.get("malicious", 0) > 0:
+        score += 70
+        reasons.append("VirusTotal reports malicious URL detections")
+
+    if vt_data.get("suspicious", 0) > 0:
+        score += 30
+        reasons.append("VirusTotal reports suspicious URL behavior")
+
+    if vt_data.get("status") == "NOT_ANALYZED":
+        reasons.append("URL not yet analyzed by VirusTotal")
+
+    if score >= 70:
+        verdict = "MALICIOUS"
+    elif score >= 40:
+        verdict = "SUSPICIOUS"
+    else:
+        verdict = "CLEAN"
+
+    return {
+        "risk_score": min(score, 100),
         "verdict": verdict,
         "reasons": reasons
     }
