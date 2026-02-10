@@ -7,90 +7,122 @@ import datetime
 # --- PAGE SETUP ---
 st.set_page_config(page_title="TICE Dashboard", page_icon="🛡️", layout="wide")
 
-st.title("🛡️ TICE: Threat Intelligence Correlation Engine")
-st.markdown("---")
+# --- CUSTOM CSS FOR ELEGANCE ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div[data-testid="stMetricValue"] { font-size: 28px; color: #00d4ff; }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px; background-color: #161b22; border-radius: 5px; color: white;
+    }
+    .status-card {
+        padding: 20px; border-radius: 10px; border: 1px solid #30363d;
+        background-color: #161b22; margin-bottom: 15px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- HISTORY SYSTEM ---
 HISTORY_FILE = "frontend/ip_history.csv"
 
-def save_search(ip, score, verdict):
+def save_search(item, score, verdict, type="IP"):
     now = datetime.datetime.now().strftime("%H:%M:%S")
-    new_entry = pd.DataFrame([[now, ip, verdict, score]],
-                             columns=["Time", "IP", "Verdict", "Score"])
-    if not os.path.exists(HISTORY_FILE):
-        new_entry.to_csv(HISTORY_FILE, index=False)
-    else:
-        new_entry.to_csv(HISTORY_FILE, mode='a', header=False, index=False)
+    new_entry = pd.DataFrame([[now, item, verdict, score, type]],
+                             columns=["Time", "Target", "Verdict", "Score", "Type"])
+    new_entry.to_csv(HISTORY_FILE, mode='a', header=not os.path.exists(HISTORY_FILE), index=False)
 
-# Sidebar History
-st.sidebar.header("Recent Scans")
-if os.path.exists(HISTORY_FILE):
-    try:
-        history_data = pd.read_csv(HISTORY_FILE)
-        st.sidebar.dataframe(history_data.tail(5), use_container_width=True)
-    except:
-        st.sidebar.write("History log started.")
+# --- SIDEBAR HISTORY ---
+with st.sidebar:
+    st.title("📡 TICE CORE")
+    st.markdown("---")
+    st.header("Recent Scans")
+    if os.path.exists(HISTORY_FILE):
+        try:
+            history_data = pd.read_csv(HISTORY_FILE)
+            st.dataframe(history_data.tail(8), use_container_width=True, hide_index=True)
+        except:
+            st.write("Telemetry log ready.")
 
 # --- MAIN INTERFACE ---
-target_ip = st.text_input("Search IP Address", placeholder="e.g. 8.8.8.8")
+st.title("🛡️ Threat Intelligence Correlation Engine")
+st.caption("Synchronized Cross-Platform Security Analysis")
 
-if st.button("Analyze Threat"):
-    if target_ip:
-        with st.spinner(f"Analyzing {target_ip}..."):
-            try:
-                # ✅ FIXED ENDPOINT
-                response = requests.get(
-                    f"http://127.0.0.1:8000/analyze/ip/{target_ip}"
-                )
+tab_ip, tab_url = st.tabs(["🔍 IP REPUTATION", "🔗 URL SIMULATOR"])
 
-                if response.status_code == 200:
-                    res = response.json()
+# --- TAB 1: IP REPUTATION ---
+with tab_ip:
+    target_ip = st.text_input("Enter IP Address", placeholder="e.g. 8.8.8.8", key="ip_input")
+    if st.button("Analyze IP", type="primary"):
+        if target_ip:
+            with st.spinner(f"Intercepting signals for {target_ip}..."):
+                try:
+                    response = requests.get(f"http://127.0.0.1:8000/analyze/ip/{target_ip}")
+                    if response.status_code == 200:
+                        res = response.json()
+                        corr = res.get("correlation", {})
+                        score, verdict = corr.get("risk_score", 0), corr.get("verdict", "UNKNOWN")
+                        
+                        # Results Header
+                        c1, c2, c3 = st.columns([1, 1, 2])
+                        c1.metric("Risk Score", f"{score}/100")
+                        c2.metric("Verdict", verdict)
+                        
+                        st.progress(score / 100)
+                        
+                        if verdict == "MALICIOUS": st.error(f"🚨 CRITICAL THREAT: {target_ip}")
+                        elif verdict == "SUSPICIOUS": st.warning(f"⚠️ SUSPICIOUS ACTIVITY: {target_ip}")
+                        else: st.success(f"✅ CLEAN SIGNAL: {target_ip}")
 
-                    corr = res.get("correlation", {})
-                    score = corr.get("risk_score", 0)
-                    verdict = corr.get("verdict", "UNKNOWN")
-                    reasons = corr.get("reasons", [])
+                        # Details Tabs
+                        t1, t2, t3 = st.tabs(["AbuseIPDB", "Shodan", "VirusTotal"])
+                        t1.json(res.get("abuseipdb", {}))
+                        t2.json(res.get("shodan", {}))
+                        t3.json(res.get("virustotal", {}))
+                        
+                        save_search(target_ip, score, verdict, "IP")
+                    else: st.error(f"Backend Error: {response.status_code}")
+                except Exception as e: st.error(f"Connection Failed: {e}")
 
-                    # --- DISPLAY RESULT ---
-                    st.subheader("Correlation Result")
-                    c1, c2 = st.columns([1, 3])
+# --- TAB 2: URL SIMULATOR ---
+with tab_url:
+    st.subheader("Link Analysis & Simulation")
+    url_input = st.text_input("Enter URL for deep analysis", placeholder="https://suspicious-site.net/login")
+    
+    if st.button("EXECUTE URL SCAN", type="primary"):
+        if url_input:
+            with st.spinner("Analyzing URL Security DNA..."):
+                try:
+                    response = requests.get(f"http://127.0.0.1:8000/analyze-url?url={url_input}")
+                    if response.status_code == 200:
+                        url_res = response.json()
+                        m, s, h = url_res.get("malicious", 0), url_res.get("suspicious", 0), url_res.get("harmless", 0)
+                        status = url_res.get("status")
 
-                    c1.metric("Risk Score", f"{score}/100")
+                        # Elegant Metric Row
+                        col1, col2, col3 = st.columns(3)
+                        
+                        # Logic for Verdict
+                        if m > 0: v_text, v_col = "❌ MALICIOUS", "red"
+                        elif s > 0: v_text, v_col = "⚠️ SUSPICIOUS", "orange"
+                        else: v_text, v_col = "✅ CLEAN", "green"
 
-                    if verdict == "MALICIOUS":
-                        c2.error(f"Verdict: {verdict}")
-                    elif verdict == "SUSPICIOUS":
-                        c2.warning(f"Verdict: {verdict}")
-                    else:
-                        c2.success(f"Verdict: {verdict}")
+                        col1.markdown(f"**Verdict**\n### :{v_col}[{v_text}]")
+                        col2.metric("Detections", f"{m} Engines")
+                        col3.metric("Analysis", status)
 
-                    st.progress(score / 100)
+                        # Visual breakdown
+                        st.markdown("---")
+                        c_info, c_chart = st.columns([2, 1])
+                        with c_info:
+                            st.info(f"Summary: Found **{m}** malicious and **{s}** suspicious indicators across **{m+s+h}** security scanners.")
+                            st.progress(min((m * 20), 100) / 100) # Simple visual risk gauge
+                        
+                        with c_chart:
+                            st.bar_chart(pd.DataFrame({'Hits': [m, s, h]}, index=['Malicious', 'Suspicious', 'Harmless']))
 
-                    # --- REASONS DISPLAY ---
-                    if reasons:
-                        st.markdown("### 🚨 Detection Reasons")
-                        for r in reasons:
-                            st.write(f"- {r}")
-                    else:
-                        st.info("No strong indicators detected.")
-
-                    # Save history
-                    save_search(target_ip, score, verdict)
-
-                    # --- DETAILS ---
-                    st.markdown("---")
-                    t1, t2, t3 = st.tabs(["AbuseIPDB", "Shodan", "VirusTotal"])
-                    with t1:
-                        st.json(res.get("abuseipdb", {}))
-                    with t2:
-                        st.json(res.get("shodan", {}))
-                    with t3:
-                        st.json(res.get("virustotal", {}))
-
-                else:
-                    st.error(f"Backend Error: {response.status_code}")
-
-            except Exception as e:
-                st.error(f"Backend not reachable: {e}")
-    else:
-        st.warning("Please enter an IP address.")
+                        with st.expander("🔬 View Raw JSON Response"):
+                            st.json(url_res)
+                            
+                        save_search(url_input, m, v_text, "URL")
+                except Exception as e: st.error(f"URL Service Unreachable: {e}")
