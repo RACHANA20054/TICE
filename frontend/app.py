@@ -72,7 +72,7 @@ with st.sidebar:
             else:
                 st.info("No logs found.")
         except:
-            os.remove(HISTORY_FILE)
+            if os.path.exists(HISTORY_FILE): os.remove(HISTORY_FILE)
             st.rerun()
     else:
         st.info("Logs will appear here.")
@@ -91,7 +91,6 @@ with tab_ip:
         if target_ip:
             with st.spinner("Querying API..."):
                 try:
-                    # FIX: Correct request logic inside the button block
                     response = requests.get(f"http://127.0.0.1:8000/analyze/ip/{target_ip}")
                     if response.status_code == 200:
                         data = response.json()
@@ -110,12 +109,21 @@ with tab_ip:
         corr = res.get("correlation", {})
         score = corr.get("risk_score", 0)
         verdict = corr.get("verdict", "UNKNOWN")
+        
+        # Tor Check Logic
+        abuse_data = res.get("abuseipdb", {}).get("data", {})
+        is_tor = abuse_data.get("isTor", False)
 
         st.markdown("---")
         c1, c2, c3 = st.columns([1, 1, 2])
         c1.metric("Risk Score", f"{score}/100")
         c2.metric("Verdict", verdict)
-        st.progress(score / 100)
+        
+        # Safety clamp for IP progress bar
+        st.progress(max(0.0, min(1.0, score / 100)))
+
+        if is_tor:
+            st.error("🕵️ **Privacy Alert: This IP is a TOR Exit Node**")
         
         t1, t2, t3 = st.tabs(["AbuseIPDB", "Shodan", "VirusTotal"])
         with t1: st.json(res.get("abuseipdb", {}))
@@ -138,8 +146,7 @@ with tab_url:
                         data = response.json()
                         st.session_state.last_url_result = data
                         st.session_state.last_url_target = url_input
-                        corr = data.get("correlation", {})
-                        save_search(url_input, corr.get("risk_score", 0), corr.get("verdict", "UNKNOWN"), "URL")
+                        # Use a temporary prob for the save_search if needed or update after AI runs
                         st.rerun()
                     else:
                         st.error(f"Backend API Error: {response.status_code}")
@@ -150,52 +157,37 @@ with tab_url:
         url_res = st.session_state.last_url_result
         target_url = st.session_state.last_url_target
         vt_data = url_res.get("virustotal", {})
-        corr_data = url_res.get("correlation", {})
-
+        
         m, s, h = vt_data.get("malicious", 0), vt_data.get("suspicious", 0), vt_data.get("harmless", 0)
-        verdict = corr_data.get("verdict", "UNKNOWN")
 
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
-        v_col = "red" if verdict == "MALICIOUS" else "green"
-        col1.markdown(f"**API Verdict**\n### :{v_col}[{verdict}]")
-        col2.metric("Engine Hits", f"{m} Detections")
-        col3.metric("Clean Checks", h)
-        # --- 🤖 TICE AI Auditor (Enhanced Logic) ---
         st.markdown("---")
         st.subheader("🤖 TICE AI Auditor")
         
+        prob = 0.0 # Default
         if brain:
-            # 1. KEYWORD WEIGHTING (Detects Deception)
-            # Add words common in phishing but rare in simple structural scans
             danger_words = ['login', 'secure', 'verify', 'update', 'banking', 'account', 'signin', 'ebay', 'paypal', 'office365']
             found_danger = any(word in target_url.lower() for word in danger_words)
             
-            # 2. FEATURE EXTRACTION
             dna_features = [[
                 len(target_url), 
                 target_url.count('.'), 
                 target_url.count('-'), 
                 sum(c.isdigit() for c in target_url), 
                 1 if '@' in target_url else 0,
-                1 if target_url.startswith('http://') else 0  # http is a risk factor over https
+                1 if target_url.startswith('http://') else 0
             ]]
             
-            # 3. PREDICTION
-            # Base probability from your joblib model
             prob = brain.predict_proba(dna_features)[0][1] * 100
             
-            # 4. OVERRIDE/PENALTY SYSTEM
-            # If "secure" or "login" is found, we boost the score to prevent the "15% trap"
             if found_danger:
-                prob = max(prob, 65.0)  # Minimum 65% suspicion if keywords are present
-                prob = min(98.0, prob + 20.0) # Add 20% on top of existing suspicion
+                prob = max(prob, 65.0)
+                prob = min(98.0, prob + 20.0)
             
-            # 5. UI DISPLAY
             a1, a2 = st.columns([1, 2])
             a1.metric("AI Suspicion Level", f"{prob:.1f}%")
             with a2:
-                st.progress(prob / 100)
+                # Safety clamp for AI progress bar
+                st.progress(max(0.0, min(1.0, prob / 100)))
                 if prob > 60:
                     st.error("🚨 AI Insight: Phishing keywords or high-risk structural DNA detected!")
                 elif prob > 30:
@@ -203,40 +195,48 @@ with tab_url:
                 else:
                     st.success("✅ AI Insight: URL structure appears legitimate.")
         else:
-            st.warning(f"AI Brain is offline. Expected at: {MODEL_PATH}")
-        with st.expander("🔭 View Raw API Response"):
-            st.json(url_res)
-    # --- 🛡️ Unified Verdict & Combined Risk Score ---
-       # --- 🛡️ Updated Unified Verdict (Logical "OR" Strategy) ---
+            st.warning("AI Brain is offline.")
+
+        # --- 🛡️ Unified Verdict Logic ---
+        # --- 🛡️ FIXED Unified Verdict (Prevents scores > 100) ---
         st.markdown("---")
         st.subheader("🛡️ Unified Threat Intelligence Result")
 
-        # 1. Gather individual signals
+        # 1. Individual Signals
         api_hits = vt_data.get("malicious", 0)
-        ai_is_suspicious = prob > 50.0  # Threshold for your AI Auditor
         
-        # 2. Logic: If EITHER flags it, update the final status
-        if api_hits > 0 or prob > 75.0:
+        # 2. Score Calculation Logic
+        # Instead of adding, we take the MAX of AI or API risk to stay within 100
+        api_score = min(100.0, api_hits * 10) # 10 points per engine hit, maxed at 100
+        
+        # Use 'max' so the strongest warning wins, but never goes over 100
+        consolidated_score = max(prob, api_score) 
+
+        # 3. Final Verdict based on the "OR" logic you requested
+        if api_hits > 0 or prob > 70.0:
             final_verdict = "MALICIOUS"
             v_color = "red"
-            reason = f"Detected by {'API' if api_hits > 0 else 'AI Auditor'} (Confidence: {max(api_hits*10, prob):.1f}%)"
-        elif ai_is_suspicious or api_hits == 0 and prob > 40:
+            reason = "Danger flagged by " + ("API" if api_hits > 0 else "AI Auditor")
+        elif prob > 40.0:
             final_verdict = "SUSPICIOUS"
             v_color = "orange"
-            reason = "AI Auditor detects high-risk structural patterns (API reports clean)."
+            reason = "AI Auditor flags unusual patterns."
         else:
             final_verdict = "CLEAN"
             v_color = "green"
-            reason = "Both API and AI Auditor consider this URL safe."
+            reason = "Safe: No threats found."
 
-        # 3. Calculate a truly consolidated score
-        # We take the HIGHEST risk value found, not the average
-        consolidated_score = max(prob, (api_hits * 20)) 
-
-        # 4. UI Display
+        # 4. Corrected UI Display
         f1, f2 = st.columns([1, 2])
         f1.markdown(f"**Final Consolidated Verdict**\n### :{v_color}[{final_verdict}]")
         with f2:
-            st.write(f"**Max Risk Score Detected: {consolidated_score:.1f}/100**")
-            st.progress(consolidated_score / 100)
-            st.info(f"**Analysis Insight:** {reason}")
+            st.write(f"**Consolidated Risk Score: {consolidated_score:.1f}/100**")
+            
+            # THE SAFETY CLAMP: Ensures progress bar never receives a value > 1.0
+            safe_bar_value = max(0.0, min(1.0, consolidated_score / 100))
+            st.progress(safe_bar_value)
+            
+            st.info(f"**Insight:** {reason}")
+
+        with st.expander("🔭 View Raw API Response"):
+            st.json(url_res)
