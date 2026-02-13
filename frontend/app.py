@@ -13,7 +13,18 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.abspath(os.path.join(current_dir, "..", "backend", "tice_brain.joblib"))
 HISTORY_FILE = os.path.join(current_dir, "ip_history.csv")
 
-# --- 2. LOAD AI BRAIN ---
+# --- 2. TOR CHECK FUNCTION (Official Method) ---
+def is_tor_exit_node(ip):
+    try:
+        # Fetch the official list of active exit nodes
+        response = requests.get("https://check.torproject.org/exit-addresses", timeout=5)
+        if ip in response.text:
+            return True
+        return False
+    except Exception:
+        return False
+
+# --- 3. LOAD AI BRAIN ---
 @st.cache_resource
 def load_ai_model():
     if os.path.exists(MODEL_PATH):
@@ -25,7 +36,7 @@ def load_ai_model():
 
 brain = load_ai_model()
 
-# --- 3. CUSTOM CSS ---
+# --- 4. CUSTOM CSS ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -37,7 +48,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. HISTORY LOGGING ---
+# --- 5. HISTORY LOGGING ---
 def save_search(item, score, verdict, scan_type="IP"):
     now = datetime.datetime.now().strftime("%H:%M:%S")
     new_entry = pd.DataFrame([[now, item, verdict, score, scan_type]],
@@ -45,7 +56,7 @@ def save_search(item, score, verdict, scan_type="IP"):
     file_exists = os.path.isfile(HISTORY_FILE)
     new_entry.to_csv(HISTORY_FILE, mode='a', header=not file_exists, index=False)
 
-# --- 5. SIDEBAR: TELEMETRY LOGS ---
+# --- 6. SIDEBAR: TELEMETRY LOGS ---
 with st.sidebar:
     st.title("📡 TICE CORE")
     
@@ -77,7 +88,7 @@ with st.sidebar:
     else:
         st.info("Logs will appear here.")
 
-# --- 6. MAIN INTERFACE ---
+# --- 7. MAIN INTERFACE ---
 st.title("🛡️ Threat Intelligence Engine")
 st.caption("Synchronized API Analysis & Machine Learning Auditor")
 
@@ -106,24 +117,24 @@ with tab_ip:
 
     if "last_ip_result" in st.session_state:
         res = st.session_state.last_ip_result
+        target_ip = st.session_state.last_ip_target
         corr = res.get("correlation", {})
         score = corr.get("risk_score", 0)
         verdict = corr.get("verdict", "UNKNOWN")
         
-        # Tor Check Logic
-        abuse_data = res.get("abuseipdb", {}).get("data", {})
-        is_tor = abuse_data.get("isTor", False)
+        # --- NEW TOR CHECK INTEGRATION ---
+        is_tor = is_tor_exit_node(target_ip)
 
         st.markdown("---")
         c1, c2, c3 = st.columns([1, 1, 2])
         c1.metric("Risk Score", f"{score}/100")
         c2.metric("Verdict", verdict)
         
-        # Safety clamp for IP progress bar
         st.progress(max(0.0, min(1.0, score / 100)))
 
         if is_tor:
-            st.error("🕵️ **Privacy Alert: This IP is a TOR Exit Node**")
+            st.error(f"🕵️ **Tor Detection: {target_ip} is an active Tor Exit Node.**")
+            st.warning("Note: Traffic from Tor nodes is often used for anonymization and carries higher risk.")
         
         t1, t2, t3 = st.tabs(["AbuseIPDB", "Shodan", "VirusTotal"])
         with t1: st.json(res.get("abuseipdb", {}))
@@ -146,7 +157,6 @@ with tab_url:
                         data = response.json()
                         st.session_state.last_url_result = data
                         st.session_state.last_url_target = url_input
-                        # Use a temporary prob for the save_search if needed or update after AI runs
                         st.rerun()
                     else:
                         st.error(f"Backend API Error: {response.status_code}")
@@ -158,12 +168,10 @@ with tab_url:
         target_url = st.session_state.last_url_target
         vt_data = url_res.get("virustotal", {})
         
-        m, s, h = vt_data.get("malicious", 0), vt_data.get("suspicious", 0), vt_data.get("harmless", 0)
-
         st.markdown("---")
         st.subheader("🤖 TICE AI Auditor")
         
-        prob = 0.0 # Default
+        prob = 0.0
         if brain:
             danger_words = ['login', 'secure', 'verify', 'update', 'banking', 'account', 'signin', 'ebay', 'paypal', 'office365']
             found_danger = any(word in target_url.lower() for word in danger_words)
@@ -186,7 +194,6 @@ with tab_url:
             a1, a2 = st.columns([1, 2])
             a1.metric("AI Suspicion Level", f"{prob:.1f}%")
             with a2:
-                # Safety clamp for AI progress bar
                 st.progress(max(0.0, min(1.0, prob / 100)))
                 if prob > 60:
                     st.error("🚨 AI Insight: Phishing keywords or high-risk structural DNA detected!")
@@ -194,49 +201,32 @@ with tab_url:
                     st.warning("⚠️ AI Insight: Unusual URL characteristics observed.")
                 else:
                     st.success("✅ AI Insight: URL structure appears legitimate.")
-        else:
-            st.warning("AI Brain is offline.")
-
-        # --- 🛡️ Unified Verdict Logic ---
-        # --- 🛡️ FIXED Unified Verdict (Prevents scores > 100) ---
+        
+        # --- Unified Verdict Logic (Stabilized) ---
         st.markdown("---")
         st.subheader("🛡️ Unified Threat Intelligence Result")
 
-        # 1. Individual Signals
         api_hits = vt_data.get("malicious", 0)
         
-        # 2. Score Calculation Logic
-        # Instead of adding, we take the MAX of AI or API risk to stay within 100
-        api_score = min(100.0, api_hits * 10) # 10 points per engine hit, maxed at 100
-        
-        # Use 'max' so the strongest warning wins, but never goes over 100
-        consolidated_score = max(prob, api_score) 
-
-        # 3. Final Verdict based on the "OR" logic you requested
-        if api_hits > 0 or prob > 70.0:
+        if api_hits > 0 or prob > 75.0:
             final_verdict = "MALICIOUS"
             v_color = "red"
-            reason = "Danger flagged by " + ("API" if api_hits > 0 else "AI Auditor")
-        elif prob > 40.0:
+        elif prob > 45.0:
             final_verdict = "SUSPICIOUS"
             v_color = "orange"
-            reason = "AI Auditor flags unusual patterns."
         else:
             final_verdict = "CLEAN"
             v_color = "green"
-            reason = "Safe: No threats found."
 
-        # 4. Corrected UI Display
+        # Use MAX to avoid 280/100 error
+        consolidated_score = max(prob, min(100.0, api_hits * 10))
+        
         f1, f2 = st.columns([1, 2])
         f1.markdown(f"**Final Consolidated Verdict**\n### :{v_color}[{final_verdict}]")
         with f2:
-            st.write(f"**Consolidated Risk Score: {consolidated_score:.1f}/100**")
-            
-            # THE SAFETY CLAMP: Ensures progress bar never receives a value > 1.0
-            safe_bar_value = max(0.0, min(1.0, consolidated_score / 100))
-            st.progress(safe_bar_value)
-            
-            st.info(f"**Insight:** {reason}")
+            st.write(f"**Max Risk Score: {consolidated_score:.1f}/100**")
+            st.progress(max(0.0, min(1.0, consolidated_score / 100)))
+            st.info("Combined analysis of AI structural patterns and global threat databases.")
 
         with st.expander("🔭 View Raw API Response"):
             st.json(url_res)
