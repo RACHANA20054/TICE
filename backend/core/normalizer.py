@@ -18,3 +18,25 @@ def normalize_virustotal(data):
         "malicious": stats.get("malicious", 0),
         "suspicious": stats.get("suspicious", 0)
     }
+
+def normalize_shodan(data):
+    if not isinstance(data, dict):
+        return {}
+
+    org = data.get("org", "")
+    isp = data.get("isp", "")
+
+    hosting_keywords = [
+        "amazon", "aws", "google", "azure",
+        "digitalocean", "ovh", "hetzner", "linode"
+    ]
+
+    is_vpn = any(k in (org + isp).lower() for k in hosting_keywords)
+
+    return {
+        "open_ports": data.get("ports", []),
+        "vulns": list(data.get("vulns", [])),
+        "is_vpn": is_vpn,
+        "org": org
+    }
+

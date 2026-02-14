@@ -20,6 +20,8 @@ from core.normalizer import (
     normalize_virustotal
 )
 from core.correlator import correlate, correlate_url
+from services.tor_service import check_tor_exit
+
 
 # 5️⃣ FastAPI app
 app = FastAPI(
@@ -78,4 +80,25 @@ def debug_env():
         "abuseipdb_key_loaded": bool(os.getenv("ABUSEIPDB_API_KEY")),
         "shodan_key_loaded": bool(os.getenv("SHODAN_API_KEY")),
         "virustotal_key_loaded": bool(os.getenv("VT_API_KEY")),
+    }
+@app.get("/analyze/ip/{ip}")
+def analyze_ip(ip: str):
+    abuse = check_ip_abuseipdb(ip)
+    shodan = check_ip_shodan(ip)
+    vt = check_ip_virustotal(ip)
+    tor = check_tor_exit(ip)
+
+    abuse_n = normalize_abuseipdb(abuse)
+    shodan_n = normalize_shodan(shodan)
+    vt_n = normalize_virustotal(vt)
+
+    correlation = correlate(abuse_n, shodan_n, vt_n, tor)
+
+    return {
+        "ip": ip,
+        "abuseipdb": abuse_n,
+        "shodan": shodan_n,
+        "virustotal": vt_n,
+        "tor": tor,
+        "correlation": correlation
     }
